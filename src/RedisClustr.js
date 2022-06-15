@@ -7,7 +7,7 @@ var Events = require('events').EventEmitter;
 var util = require('util');
 var Queue = require('denque');
 
-var RedisClustr = module.exports = function(config) {
+var RedisClustr = module.exports = function (config) {
   var self = this;
 
   Events.call(self);
@@ -40,7 +40,7 @@ var RedisClustr = module.exports = function(config) {
 
 util.inherits(RedisClustr, Events);
 
-RedisClustr.prototype.createClient = function(port, host) {
+RedisClustr.prototype.createClient = function (port, host) {
   var self = this;
 
   var createClient = self.config.createClient || redis.createClient;
@@ -57,7 +57,7 @@ RedisClustr.prototype.createClient = function(port, host) {
  * @param  {boolean}  master Whether this client is a master or not (a slave)
  * @return {Redis}           The Redis client
  */
-RedisClustr.prototype.getClient = function(port, host, master) {
+RedisClustr.prototype.getClient = function (port, host, master) {
   var self = this;
   var name = host + ':' + port;
 
@@ -72,16 +72,11 @@ RedisClustr.prototype.getClient = function(port, host, master) {
   cli = self.createClient(port, host);
   cli.master = master;
 
-  cli.on('error', function(err) {
-    if (self.config.exitWithoutRetry) {
-      throw new Error('OUR OWN ERROR MESSAGE')
-    }
-
-    if (
-      err.code === 'CONNECTION_BROKEN' ||
+  cli.on('error', function (err) {
+    if (!self.config.no_retry && (err.code === 'CONNECTION_BROKEN' ||
       err.code === 'UNCERTAIN_STATE' ||
       err.code === 'NR_CLOSED' ||
-      /Redis connection to .* failed.*/.test(err.message)
+      /Redis connection to .* failed.*/.test(err.message))
     ) {
       // broken/closed connection so force a new client to be created (node_redis should reconnect other errors)
       if (err.code === 'CONNECTION_BROKEN' || err.code === 'NR_CLOSED') self.connections[name] = null;
@@ -95,16 +90,16 @@ RedisClustr.prototype.getClient = function(port, host, master) {
   });
 
   // as soon as one client is ready, we're connected (ready to fetch slot allocation)
-  cli.on('ready', function() {
+  cli.on('ready', function () {
     if (!self.connected) {
       self.connected = true;
       self.emit('connect');
     }
   });
 
-  cli.on('end', function() {
+  cli.on('end', function () {
     var wasConnected = self.connected;
-    self.connected = Object.keys(self.connections).some(function(c) {
+    self.connected = Object.keys(self.connections).some(function (c) {
       return self.connections[c] && self.connections[c].ready;
     });
     if (!self.connected && wasConnected) self.emit('disconnect');
@@ -113,9 +108,9 @@ RedisClustr.prototype.getClient = function(port, host, master) {
     if (cli.closing) self.connections[name] = null;
 
     // setImmediate as node_redis sets emitted_end after emitting end
-    setImmediate(function() {
+    setImmediate(function () {
       var wasEnded = self.ended;
-      self.ended = Object.keys(self.connections).every(function(c) {
+      self.ended = Object.keys(self.connections).every(function (c) {
         var cc = self.connections[c];
         return !cc || (!cc.connected && cc.emitted_end);
       });
@@ -134,12 +129,12 @@ RedisClustr.prototype.getClient = function(port, host, master) {
  * @param  {boolean} forceSlaves Include slaves, regardless of configuration
  * @return {Redis}               A random, ready, Redis connection.
  */
-RedisClustr.prototype.getRandomConnection = function(exclude, forceSlaves) {
+RedisClustr.prototype.getRandomConnection = function (exclude, forceSlaves) {
   var self = this;
 
   var masterOnly = !forceSlaves && self.config.slaves === 'never';
 
-  var available = Object.keys(self.connections).filter(function(f) {
+  var available = Object.keys(self.connections).filter(function (f) {
     var con = self.connections[f];
     return con &&
       con.ready &&
@@ -157,7 +152,7 @@ RedisClustr.prototype.getRandomConnection = function(exclude, forceSlaves) {
  * @date   2015-02-14
  * @param  {Function} cb
  */
-RedisClustr.prototype.getSlots = function(cb) {
+RedisClustr.prototype.getSlots = function (cb) {
   var self = this;
 
   var q = self._slotQ;
@@ -179,7 +174,7 @@ RedisClustr.prototype.getSlots = function(cb) {
   self._slotQ = q = new Queue();
   if (cb) q.push(cb);
 
-  var runCbs = function(err, slots) {
+  var runCbs = function (err, slots) {
     var cb;
     while ((cb = self._slotQ.shift())) {
       cb(err, slots);
@@ -189,7 +184,7 @@ RedisClustr.prototype.getSlots = function(cb) {
 
   var exclude = [];
   var tryErrors = null;
-  var tryClient = function() {
+  var tryClient = function () {
     if (typeof readyTimeout !== 'undefined') clearTimeout(readyTimeout);
     if (self.quitting) return runCbs(new Error('cluster is quitting'));
 
@@ -200,7 +195,7 @@ RedisClustr.prototype.getSlots = function(cb) {
       return runCbs(err);
     }
 
-    client.cluster('slots', function(err, slots) {
+    client.cluster('slots', function (err, slots) {
       if (err) {
         // exclude this client from then next attempt
         exclude.push(client.address);
@@ -220,7 +215,7 @@ RedisClustr.prototype.getSlots = function(cb) {
         var end = s[1];
 
         // array of all clients, clients[0] = master, others are slaves
-        var clients = s.slice(2).map(function(c, index) {
+        var clients = s.slice(2).map(function (c, index) {
           var name = c[0] + ':' + c[1];
           if (seenClients.indexOf(name) === -1) seenClients.push(name);
 
@@ -257,7 +252,7 @@ RedisClustr.prototype.getSlots = function(cb) {
             }
             continue;
           }
-          c.once('ready', function() {
+          c.once('ready', function () {
             if (++ready === seenClients.length) {
               self.fullReady = true;
               self.emit('fullReady');
@@ -280,7 +275,7 @@ RedisClustr.prototype.getSlots = function(cb) {
  * @param  {object}   conf Configuration relating to the command (e.g. if it's readOnly)
  * @return {Redis}         A Redis client
  */
-RedisClustr.prototype.selectClient = function(key, conf) {
+RedisClustr.prototype.selectClient = function (key, conf) {
   var self = this;
 
   // this command doesnt have keys, return any connection
@@ -336,10 +331,10 @@ RedisClustr.prototype.selectClient = function(key, conf) {
  * @param  {Function} [cb]  Callback function so we can wait for the slot allocation
  * @return {array}          The parsed arguments and the callback function
  */
-RedisClustr.prototype.parseArgs = function(args, cb) {
+RedisClustr.prototype.parseArgs = function (args, cb) {
   var self = this;
 
-  var commandCB = function(err) {
+  var commandCB = function (err) {
     if (err) self.emit('error', err);
   };
 
@@ -349,7 +344,7 @@ RedisClustr.prototype.parseArgs = function(args, cb) {
   }
 
   if (!self.slots.length && cb) {
-    self.getSlots(function(err) {
+    self.getSlots(function (err) {
       if (err) return commandCB(err);
       self.parseArgs(args, cb);
     });
@@ -364,7 +359,7 @@ RedisClustr.prototype.parseArgs = function(args, cb) {
   }
 
   if (cb) cb(null, args, commandCB);
-  return [ args, commandCB ];
+  return [args, commandCB];
 };
 
 /**
@@ -374,10 +369,10 @@ RedisClustr.prototype.parseArgs = function(args, cb) {
  * @param  {object}   conf Configuration related to this command (e.g. whether the key is readOnly)
  * @param  {array}    args Arguments to be passed to the command (including commandCallback)
  */
-RedisClustr.prototype.doCommand = function(cmd, conf, args) {
+RedisClustr.prototype.doCommand = function (cmd, conf, args) {
   var self = this;
 
-  self.parseArgs(args, function(_, args, cb) {
+  self.parseArgs(args, function (_, args, cb) {
     var key = args[0];
 
     if (!key && !conf.keyless) return cb(new Error('no key for command: ' + cmd));
@@ -397,10 +392,10 @@ RedisClustr.prototype.doCommand = function(cmd, conf, args) {
  * @param  {object}   conf Configuration related to this command (e.g. the key interval)
  * @param  {array}    args Arguments to be passed to the command (including commandCallback)
  */
-RedisClustr.prototype.doMultiKeyCommand = function(cmd, conf, origArgs) {
+RedisClustr.prototype.doMultiKeyCommand = function (cmd, conf, origArgs) {
   var self = this;
 
-  self.parseArgs(origArgs, function(_, args, cb) {
+  self.parseArgs(origArgs, function (_, args, cb) {
 
     // already split into an individual command
     if (args.length === conf.interval) {
@@ -413,7 +408,7 @@ RedisClustr.prototype.doMultiKeyCommand = function(cmd, conf, origArgs) {
       b[cmd].apply(b, args.slice(i, i + conf.interval));
     }
 
-    b.exec(function(err, resp) {
+    b.exec(function (err, resp) {
       if (resp) resp = conf.group(resp);
       cb(err, resp);
     });
@@ -428,7 +423,7 @@ RedisClustr.prototype.doMultiKeyCommand = function(cmd, conf, origArgs) {
  * @param  {array}    args Arguments to be passed to the command (and to have our callback added to)
  * @param  {Function} cb   The main callback to wrap around
  */
-RedisClustr.prototype.commandCallback = function(cli, cmd, args, cb) {
+RedisClustr.prototype.commandCallback = function (cli, cmd, args, cb) {
   var self = this;
 
   // number of attempts/redirects when we get connection errors
@@ -436,7 +431,7 @@ RedisClustr.prototype.commandCallback = function(cli, cmd, args, cb) {
   // https://github.com/antirez/redis-rb-cluster/blob/fd931ed34dfc53159e2f52c9ea2d4a5073faabeb/cluster.rb#L29
   var retries = 16;
 
-  args.push(function(err, resp) {
+  args.push(function (err, resp) {
     if (err && err.message && retries--) {
       var msg = err.message;
       var ask = msg.substr(0, 4) === 'ASK ';
@@ -458,7 +453,7 @@ RedisClustr.prototype.commandCallback = function(cli, cmd, args, cb) {
 
       if (err.code === 'CLUSTERDOWN' || msg.substr(0, 8) === 'TRYAGAIN') {
         // TRYAGAIN response or cluster down, retry with backoff up to 1280ms
-        setTimeout(function() {
+        setTimeout(function () {
           cli[cmd].apply(cli, args);
         }, Math.pow(2, 16 - Math.max(retries, 9)) * 10);
         return;
@@ -478,11 +473,11 @@ RedisClustr.prototype.commandCallback = function(cli, cmd, args, cb) {
  * @example
  * redis.onMasters('script', [ 'load', 'return redis.call("get", "a-key")' ], function(err) {});
  */
-RedisClustr.prototype.onMasters = function(cmd, args, cb) {
+RedisClustr.prototype.onMasters = function (cmd, args, cb) {
   var self = this;
 
   if (!self.slots.length) {
-    self.getSlots(function(err) {
+    self.getSlots(function (err) {
       if (err) return cb(err);
       self.onMasters(cmd, args, cb);
     });
@@ -492,7 +487,7 @@ RedisClustr.prototype.onMasters = function(cmd, args, cb) {
   var todo = 0;
   var errs = null;
   var fullResp = [];
-  var isDone = function(err, resp) {
+  var isDone = function (err, resp) {
     if (err) {
       if (!errs) errs = [];
       errs.push(err);
@@ -528,7 +523,7 @@ RedisClustr.prototype.onMasters = function(cmd, args, cb) {
  * @example
  * redis.waitFor('connect', redis.connected, function(err) {}) ;
  */
-RedisClustr.prototype.waitFor = function(evt, already, cb) {
+RedisClustr.prototype.waitFor = function (evt, already, cb) {
   var self = this;
 
   if (!cb && typeof already === 'function') {
@@ -541,7 +536,7 @@ RedisClustr.prototype.waitFor = function(evt, already, cb) {
 
   var waitTimeout;
 
-  var done = function() {
+  var done = function () {
     if (waitTimeout) clearTimeout(waitTimeout);
     cb();
   };
@@ -551,7 +546,7 @@ RedisClustr.prototype.waitFor = function(evt, already, cb) {
   // don't set a timeout (wait indefinitely for connection)
   if (!self.config.wait) return;
 
-  waitTimeout = setTimeout(function() {
+  waitTimeout = setTimeout(function () {
     self.removeListener(evt, done);
     cb(new Error('ready timeout reached'));
   }, self.config.wait);
@@ -562,13 +557,13 @@ RedisClustr.prototype.waitFor = function(evt, already, cb) {
  * @date   2015-11-23
  * @return {Redis}   A Redis client which can be used to subscribe
  */
-RedisClustr.prototype.subscribeAll = function(exclude) {
+RedisClustr.prototype.subscribeAll = function (exclude) {
   var self = this;
   if (self.quitting) return;
 
   if (self.subscribeClient) {
     self.subscribeClient.removeAllListeners();
-    self.subscribeClient.quit(function() {
+    self.subscribeClient.quit(function () {
       // ignore errors
     });
     self.subscribeClient = null;
@@ -583,7 +578,7 @@ RedisClustr.prototype.subscribeAll = function(exclude) {
   // duplicate the random connection and make that our subscriber client
   var cli = self.subscribeClient = self.createClient(con.connection_options.port, con.connection_options.host);
 
-  cli.on('error', function(err) {
+  cli.on('error', function (err) {
     if (
       err.code === 'CONNECTION_BROKEN' ||
       err.code === 'UNCERTAIN_STATE' ||
@@ -592,7 +587,7 @@ RedisClustr.prototype.subscribeAll = function(exclude) {
     ) {
       self.emit('connectionError', err, cli);
       // immediately try to re-subscribe
-      self.subscribeAll([ cli.address ]);
+      self.subscribeAll([cli.address]);
       return;
     }
 
@@ -600,8 +595,8 @@ RedisClustr.prototype.subscribeAll = function(exclude) {
     self.emit('error', err, cli);
   });
 
-  cli.once('end', function() {
-    self.subscribeAll([ cli.address ]);
+  cli.once('end', function () {
+    self.subscribeAll([cli.address]);
   });
 
   // bubble all messages for pubsub
@@ -613,8 +608,8 @@ RedisClustr.prototype.subscribeAll = function(exclude) {
     'psubscribe',
     'punsubscribe'
   ];
-  events.forEach(function(evt) {
-    cli.on(evt, function(a, b, c) {
+  events.forEach(function (evt) {
+    cli.on(evt, function (a, b, c) {
       self.emit(evt, a, b, c);
     });
   });
@@ -635,7 +630,7 @@ setupCommands(RedisClustr);
  * @date   2014-11-19
  * @return {RedisBatch}   A RedisBatch which has a very similar interface                                                 to redis/
  */
-RedisClustr.prototype.batch = RedisClustr.prototype.multi = function(commands) {
+RedisClustr.prototype.batch = RedisClustr.prototype.multi = function (commands) {
   var self = this;
   var batch = new RedisBatch(self);
 
@@ -657,14 +652,14 @@ RedisClustr.prototype.batch = RedisClustr.prototype.multi = function(commands) {
  * Run script commands on all master connections (especially for script load etc)
  * @date   2015-11-23
  */
-RedisClustr.prototype.script = function() {
+RedisClustr.prototype.script = function () {
   var self = this;
   var args = new Array(arguments.length);
   for (var i = 0; i < arguments.length; i++) {
     args[i] = arguments[i];
   }
 
-  self.parseArgs(args, function(_, args, cb) {
+  self.parseArgs(args, function (_, args, cb) {
     self.onMasters('script', args, cb);
   });
 };
@@ -677,10 +672,10 @@ RedisClustr.prototype.script = function() {
  * @param   {array}   args Arguments to be passed to the command
  * @private
  */
-RedisClustr.prototype._eval = function(cmd, args) {
+RedisClustr.prototype._eval = function (cmd, args) {
   var self = this;
 
-  self.parseArgs(args, function(_, args, cb) {
+  self.parseArgs(args, function (_, args, cb) {
     var numKeys = args[1];
     var r;
     if (!numKeys) {
@@ -698,8 +693,8 @@ RedisClustr.prototype._eval = function(cmd, args) {
   });
 };
 
-var overwriteFn = function(handler, fn) {
-  return function() {
+var overwriteFn = function (handler, fn) {
+  return function () {
     var args = new Array(arguments.length);
     for (var i = 0; i < arguments.length; i++) {
       args[i] = arguments[i];
@@ -720,10 +715,10 @@ RedisClustr.prototype.evalsha = overwriteFn('_eval', 'evalsha');
  * @param   {array}   args  Arguments to be passed to the command (list of channels) (including commandCallback)
  * @private
  */
-RedisClustr.prototype._subscribe = function(cmd, args) {
+RedisClustr.prototype._subscribe = function (cmd, args) {
   var self = this;
 
-  self.parseArgs(args, function(_, args, cb) {
+  self.parseArgs(args, function (_, args, cb) {
     var cli = self.subscribeClient;
     if (!cli) cli = self.subscribeAll();
     if (!cli) return cb(new Error('couldn\'t get subscriber client'));
@@ -765,7 +760,7 @@ RedisClustr.prototype.punsubscribe = overwriteFn('_subscribe', 'punsubscribe');
  * @date   2014-07-29
  * @param  {Function} cb
  */
-RedisClustr.prototype.quit = function(cb) {
+RedisClustr.prototype.quit = function (cb) {
   var self = this;
   self.quitting = true;
 
@@ -773,7 +768,7 @@ RedisClustr.prototype.quit = function(cb) {
 
   var todo = 0;
   var errs = null;
-  var quitCb = function(err) {
+  var quitCb = function (err) {
     if (err && !errs) errs = [];
     if (err) errs.push(err);
     if (!--todo && cb) cb(errs);

@@ -73,6 +73,10 @@ RedisClustr.prototype.getClient = function(port, host, master) {
   cli.master = master;
 
   cli.on('error', function(err) {
+    if (self.config.exitWithoutRetry) {
+      throw new Error('OUR OWN ERROR MESSAGE')
+    }
+
     if (
       err.code === 'CONNECTION_BROKEN' ||
       err.code === 'UNCERTAIN_STATE' ||
